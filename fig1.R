@@ -252,7 +252,7 @@ fisher.test(rbind(cbind(length(unarrested_no_mitotic), length(unarrested_mitotic
 
 all_tl_embryos <- unique(dt_subset[!is.na(cell_num_after_1st_division)]$embryo_id)
 all_2n4n <- unique(dt_subset[cell_num_after_1st_division == 2 & type_of_1st_division == "N" &
-                               cell_num_after_1st_division == 2 & type_of_1st_division == "N"]$embryo_id)
+                             cell_num_after_2nd_division == 4 & type_of_2nd_division == "N"]$embryo_id)
 all_abnormal <- all_tl_embryos[!(all_tl_embryos %in% all_2n4n)]
 all_meiotic <- unique(dt_melted[ploidy %in% c("Gain", "Loss") & is_full_char == "Full (putative meiotic)"]$embryo_id)
 normal_meiotic <- all_2n4n[all_2n4n %in% all_meiotic]
@@ -267,7 +267,7 @@ fisher.test(rbind(cbind(length(normal_no_meiotic), length(abnormal_no_meiotic)),
 
 all_tl_embryos <- unique(dt_subset[!is.na(cell_num_after_1st_division)]$embryo_id)
 all_2n4n <- unique(dt_subset[cell_num_after_1st_division == 2 & type_of_1st_division == "N" &
-                               cell_num_after_1st_division == 2 & type_of_1st_division == "N"]$embryo_id)
+                             cell_num_after_2nd_division == 4 & type_of_2nd_division == "N"]$embryo_id)
 all_abnormal <- all_tl_embryos[!(all_tl_embryos %in% all_2n4n)]
 all_mitotic <- unique(dt_melted[ploidy %in% c("Gain", "Loss") & is_full_char == "Intermediate (putative mitotic)"]$embryo_id)
 normal_mitotic <- all_2n4n[all_2n4n %in% all_mitotic]
@@ -282,7 +282,7 @@ fisher.test(rbind(cbind(length(normal_no_mitotic), length(abnormal_no_mitotic)),
 
 all_tl_embryos <- unique(dt_subset[!is.na(cell_num_after_1st_division)]$embryo_id)
 all_2n4n <- unique(dt_subset[cell_num_after_1st_division == 2 & type_of_1st_division == "N" &
-                               cell_num_after_1st_division == 2 & type_of_1st_division == "N"]$embryo_id)
+                             cell_num_after_2nd_division == 4 & type_of_2nd_division == "N"]$embryo_id)
 all_abnormal <- all_tl_embryos[!(all_tl_embryos %in% all_2n4n)]
 all_arrested <- dt_subset[is_arrested == TRUE]$embryo_id
 all_unarrested <- dt_subset[is_arrested == FALSE]$embryo_id
@@ -299,8 +299,8 @@ fisher.test(rbind(cbind(length(normal_unarrested), length(abnormal_unarrested)),
 all_euploid <- unique(dt_complete[Aneuploidy.category == 0]$embryo_id)
 all_tl_embryos <- unique(dt_subset[!is.na(cell_num_after_1st_division) & embryo_id %in% all_euploid]$embryo_id)
 all_2n4n <- unique(dt_subset[cell_num_after_1st_division == 2 & type_of_1st_division == "N" &
-                               cell_num_after_1st_division == 2 & type_of_1st_division == "N" & 
-                               embryo_id %in% all_euploid]$embryo_id)
+                             cell_num_after_2nd_division == 4 & type_of_2nd_division == "N" & 
+                             embryo_id %in% all_euploid]$embryo_id)
 all_abnormal <- all_tl_embryos[!(all_tl_embryos %in% all_2n4n)]
 all_arrested <- dt_subset[is_arrested == TRUE & embryo_id %in% all_euploid]$embryo_id
 all_unarrested <- dt_subset[is_arrested == FALSE & embryo_id %in% all_euploid]$embryo_id
