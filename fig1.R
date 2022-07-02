@@ -2,8 +2,11 @@ library(data.table)
 library(tidyverse)
 library(readxl)
 library(ggsankey)
+library(httr)
 
-dt <- read_excel(path = "~/Dropbox/papers/2022_handyside/obo_deid.xlsx", sheet = 2) %>%
+# load data and rename columns
+GET("https://github.com/mccoy-lab/embryo_arrest/blob/main/obo_deid.xlsx?raw=true", write_disk(tf <- tempfile(fileext = ".xlsx")))
+dt <- read_excel(tf, sheet = 2) %>%
   as.data.table() %>%
   setnames(., make.names(colnames(.)))
 
