@@ -5,9 +5,11 @@ library(cowplot)
 library(cli)
 library(lme4)
 library(margins)
+library(httr)
 
 # load data and rename columns
-dt <- read_excel(path = "~/Dropbox/papers/2022_handyside/obo_deid.xlsx", sheet = 2) %>%
+GET("https://github.com/mccoy-lab/embryo_arrest/blob/main/obo_deid.xlsx?raw=true", write_disk(tf <- tempfile(fileext = ".xlsx")))
+dt <- read_excel(tf, sheet = 2) %>%
   as.data.table() %>%
   setnames(., make.names(colnames(.)))
 
