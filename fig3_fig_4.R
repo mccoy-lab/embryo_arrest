@@ -4,11 +4,16 @@ library(data.table)
 library(lme4)
 library(GLMMadaptive)
 library(cowplot)
+library(httr)
 
 # load data and rename columns
-dt <- read_excel(path = "~/Dropbox/papers/2022_handyside/obo_deid.xlsx", sheet = 2) %>%
+GET("https://github.com/mccoy-lab/embryo_arrest/blob/main/obo_deid.xlsx?raw=true", write_disk(tf <- tempfile(fileext = ".xlsx")))
+dt <- read_excel(tf, sheet = 2) %>%
   as.data.table() %>%
   setnames(., make.names(colnames(.)))
+
+# give embryos a unique identifier
+dt[, embryo_id := paste(Patient.ID, .I, sep = "_")]
 
 # rename aneuploidy categories and set the order of levels
 dt[, "Copy number results" := factor(Aneuploidy.category)]
@@ -43,6 +48,18 @@ p1_a <- ggplot(data = dt, aes(x = dev_level, y = ..count.., fill = `Copy number 
   geom_vline(xintercept = 4)
 
 color_func <- colorRampPalette(c("#f7fbff", "#08306b"))
+
+# quantify aneuploidy by grade, arrest, and cell division pattern
+
+grade_summary <- dt[dev_level %in% c("AA", "AB", "BA", "BB", "BC", "CB", "CC", "DC", "CD", "DD")] %>%
+  group_by(., dev_level) %>%
+  summarize(., is_euploid = sum(Aneuploidy.category == 0), is_aneuploid = sum(Aneuploidy.category != 0)) %>%
+  as.data.table() %>%
+  .[, aneuploid_proportion := is_aneuploid / (is_aneuploid + is_euploid)]
+
+table(dt[is.na(Grade.at.biopsy)]$Aneuploidy.category == 0)
+
+dt[, is_normal_division := Cell.no.post.1st.division == 2 & Type.of.division...7 == "N" & Cell.no.post.2nd.division == 4 & Type.of.division...9 == "N"]
 
 # Function to plot color bar
 color.bar <- function(lut, min, max=-min, nticks=11, ticks=seq(min, max, len=nticks), title='') {
@@ -131,22 +148,19 @@ set.seed(1)
 dt_downsample <- rbind(dt[is_arrested == FALSE][sample(1:612, 303, replace = FALSE)],
                        dt[is_arrested == TRUE])
 
-m1 <- mixed_model(
-  is_arrested ~ Copy.number.results + Age.at.egg.collection,
-  random = ~ 1 | Patient.ID,
-  data = dt_downsample,
-  family = binomial())
+
+# how often do embryos derived from euploid zygotes arrest?
+
+logit2prob <- function(logit){
+  odds <- exp(logit)
+  prob <- odds / (1 + odds)
+  return(prob)
+}
+
+dt_downsample[, is_euploid_zygote := !(Copy.number.results %in% c("Full\nonly", "Full\nplus"))]
 
 m0 <- mixed_model(
-  is_arrested ~ Copy.number.results,
-  random = ~ 1 | Patient.ID,
-  data = dt_downsample,
-  family = binomial())
-
-anova(m1, m0)
-
-m0 <- mixed_model(
-  is_arrested ~ 0 + Copy.number.results,
+  is_arrested ~ 0 + is_euploid_zygote,
   random = ~ 1 | Patient.ID,
   data = dt_downsample,
   family = binomial())
@@ -155,14 +169,73 @@ coefs <- marginal_coefs(m0, std_errors = TRUE)$coef_table %>%
   as.data.table(keep.rownames = TRUE)
 coefs[, ll_95ci := Estimate + qnorm(0.025) * Std.Err]
 coefs[, ul_95ci := Estimate + qnorm(0.975) * Std.Err]
+coefs[, est_prob := logit2prob(Estimate)]
+coefs[, ll_prob := logit2prob(ll_95ci)]
+coefs[, ul_prob := logit2prob(ul_95ci)]
+
+# how often do embryos derived from euploid zygotes arrest, conditional on normal first and second division?
+
+m1 <- mixed_model(
+  is_arrested ~ 0 + is_euploid_zygote,
+  random = ~ 1 | Patient.ID,
+  data = dt_downsample[is_normal_division == TRUE],
+  family = binomial())
+
+coefs <- marginal_coefs(m1, std_errors = TRUE)$coef_table %>%
+  as.data.table(keep.rownames = TRUE)
+coefs[, ll_95ci := Estimate + qnorm(0.025) * Std.Err]
+coefs[, ul_95ci := Estimate + qnorm(0.975) * Std.Err]
+coefs[, est_prob := logit2prob(Estimate)]
+coefs[, ll_prob := logit2prob(ll_95ci)]
+coefs[, ul_prob := logit2prob(ul_95ci)]
+
+# how often do embryos derived from euploid zygotes arrest, conditional on abnormal first or second division
+
+m2 <- mixed_model(
+  is_arrested ~ 0 + is_euploid_zygote,
+  random = ~ 1 | Patient.ID,
+  data = dt_downsample[is_normal_division == FALSE],
+  family = binomial())
+
+coefs <- marginal_coefs(m2, std_errors = TRUE)$coef_table %>%
+  as.data.table(keep.rownames = TRUE)
+coefs[, ll_95ci := Estimate + qnorm(0.025) * Std.Err]
+coefs[, ul_95ci := Estimate + qnorm(0.975) * Std.Err]
+coefs[, est_prob := logit2prob(Estimate)]
+coefs[, ll_prob := logit2prob(ll_95ci)]
+coefs[, ul_prob := logit2prob(ul_95ci)]
+
+# how does probability of arrest depend on copy number result?
+
+m3 <- mixed_model(
+  is_arrested ~ Copy.number.results + Age.at.egg.collection,
+  random = ~ 1 | Patient.ID,
+  data = dt_downsample,
+  family = binomial())
+
+m4 <- mixed_model(
+  is_arrested ~ Copy.number.results,
+  random = ~ 1 | Patient.ID,
+  data = dt_downsample,
+  family = binomial())
+
+anova(m4, m3)
+
+m5 <- mixed_model(
+  is_arrested ~ 0 + Copy.number.results,
+  random = ~ 1 | Patient.ID,
+  data = dt_downsample,
+  family = binomial())
+
+coefs <- marginal_coefs(m5, std_errors = TRUE)$coef_table %>%
+  as.data.table(keep.rownames = TRUE)
+coefs[, ll_95ci := Estimate + qnorm(0.025) * Std.Err]
+coefs[, ul_95ci := Estimate + qnorm(0.975) * Std.Err]
+coefs[, est_prob := logit2prob(Estimate)]
+coefs[, ll_prob := logit2prob(ll_95ci)]
+coefs[, ul_prob := logit2prob(ul_95ci)]
 
 coefs[, rn := c("Euploid", "Full\nonly", "Full\nplus", "Intermed.\nplus", "Intermed.\nonly")]
-
-logit2prob <- function(logit){
-  odds <- exp(logit)
-  prob <- odds / (1 + odds)
-  return(prob)
-}
 
 dt_downsample$Copy.number.results <- factor(dt_downsample$Copy.number.results, 
                                             levels = c("Euploid", "Full\nonly", "Full\nplus", "Intermed.\nonly", "Intermed.\nplus"))
@@ -176,10 +249,6 @@ p2_data <- ggplot(data = dt_downsample, aes(x = Copy.number.results, y = ..count
   ylim(0, 1) +  
   xlab("Copy number result") +
   ylab("Proportion of embryos arrested")
-
-coefs[, est_prob := logit2prob(Estimate)]
-coefs[, ll_prob := logit2prob(ll_95ci)]
-coefs[, ul_prob := logit2prob(ul_95ci)]
 
 p2_model <- ggplot(data = coefs[1:5,], aes(x = rn, 
                                y = logit2prob(Estimate), 
@@ -197,29 +266,28 @@ p2_model <- ggplot(data = coefs[1:5,], aes(x = rn,
 
 plot_grid(p2_data, p2_model)
 
-# counts of number of aneuploid chromosomes (of different types) 
-# versus arrest / no arrest and blastocyst grades
+# how does probability of arrest depend on number of aneuploid chromosomes?
 
-m7 <- mixed_model(
+m6 <- mixed_model(
   is_arrested ~ Total.no.of.aneuploidies,
   random = ~ 1 | Patient.ID,
   data = dt_downsample,
   family = binomial())
 
-coefs <- marginal_coefs(m7, std_errors = TRUE)$coef_table %>%
+coefs <- marginal_coefs(m6, std_errors = TRUE)$coef_table %>%
   as.data.table(keep.rownames = TRUE)
 
-ilink <- family(m7)$linkinv
+ilink <- family(m6)$linkinv
 
 ndata <- data.table(Total.no.of.aneuploidies = 0:22)
 
-m7_predict <- predict(m7, ndata, se.fit = TRUE, type_pred = "link")
+m6_predict <- predict(m6, ndata, se.fit = TRUE, type_pred = "link")
 
-ndata[, response := ilink(m7_predict$pred)]
-ndata[, ul :=  ilink(m7_predict$pred + (2 * m7_predict$se.fit))]
-ndata[, ll :=  ilink(m7_predict$pred - (2 * m7_predict$se.fit))]
+ndata[, response := ilink(m6_predict$pred)]
+ndata[, ul :=  ilink(m6_predict$pred + (2 * m6_predict$se.fit))]
+ndata[, ll :=  ilink(m6_predict$pred - (2 * m6_predict$se.fit))]
 
-p7_data <- ggplot(data = dt_downsample, aes(x = Total.no.of.aneuploidies, y = ..count.., fill = is_arrested)) +
+p3_data <- ggplot(data = dt_downsample, aes(x = Total.no.of.aneuploidies, y = ..count.., fill = is_arrested)) +
   geom_bar(position = "fill") + 
   theme_bw() +
   theme(panel.grid = element_blank(),
@@ -230,7 +298,7 @@ p7_data <- ggplot(data = dt_downsample, aes(x = Total.no.of.aneuploidies, y = ..
   xlab("Number of aneuploid chromosomes") +
   ylab("Proportion of embryos arrested")
 
-p7_model <- ggplot(data = ndata, aes(x = Total.no.of.aneuploidies, 
+p3_model <- ggplot(data = ndata, aes(x = Total.no.of.aneuploidies, 
                          y = response, 
                          ymin = ll, 
                          ymax = ul)) +
@@ -243,35 +311,36 @@ p7_model <- ggplot(data = ndata, aes(x = Total.no.of.aneuploidies,
   xlab("Number of aneuploid chromosomes") +
   ylab("Probability of arrest (95% CI)")
 
-# considering all embryos (euploid and aneuploid)
+# how does probability of arrest depend on outcome of the first cell division?
+
 dt_downsample[Cell.no.post.1st.division == "5", Cell.no.post.1st.division := ">4"]
 
-m8 <- glmer(
+m7 <- glmer(
   is_arrested ~ 0 + Cell.no.post.1st.division + (1 | Patient.ID),
   data = dt_downsample,
   family = binomial())
 
-m8_coefs <- summary(m8)$coef %>%
+m7_coefs <- summary(m7)$coef %>%
   as.data.table(keep.rownames = TRUE)
 
-m8_coefs[, ll_95ci := Estimate + qnorm(0.025) * `Std. Error`]
-m8_coefs[, ul_95ci := Estimate + qnorm(0.975) * `Std. Error`]
+m7_coefs[, ll_95ci := Estimate + qnorm(0.025) * `Std. Error`]
+m7_coefs[, ul_95ci := Estimate + qnorm(0.975) * `Std. Error`]
 
-m8_coefs[, rn := gsub("Cell.no.post.1st.division", "", rn)]
+m7_coefs[, rn := gsub("Cell.no.post.1st.division", "", rn)]
 
-m8_coefs$rn <- factor(m8_coefs$rn, levels = c("1", "2", "3", "4", "5", ">4"))
+m7_coefs$rn <- factor(m7_coefs$rn, levels = c("1", "2", "3", "4", "5", ">4"))
 
-m8_results <- m8_coefs[!is.na(rn)]
-m8_results[, est_prob := logit2prob(Estimate)]
-m8_results[, ll_prob := logit2prob(ll_95ci)]
-m8_results[, ul_prob := logit2prob(ul_95ci)]
-m8_results[is.nan(ul_prob), ul_prob := 1]
+m7_results <- m7_coefs[!is.na(rn)]
+m7_results[, est_prob := logit2prob(Estimate)]
+m7_results[, ll_prob := logit2prob(ll_95ci)]
+m7_results[, ul_prob := logit2prob(ul_95ci)]
+m7_results[is.nan(ul_prob), ul_prob := 1]
 
-p8_model <- ggplot(data = m8_results, aes(x = rn, 
-                                        y = est_prob, 
-                                        ymin = ll_prob, 
-                                        ymax = ul_prob, 
-                                        color = rn)) +
+p4_model <- ggplot(data = m7_results, aes(x = rn, 
+                                          y = est_prob, 
+                                          ymin = ll_prob, 
+                                          ymax = ul_prob, 
+                                          color = rn)) +
   theme_bw() +
   theme(legend.position = "none") +
   geom_point() +
@@ -283,7 +352,7 @@ p8_model <- ggplot(data = m8_results, aes(x = rn,
 
 dt_downsample$Cell.no.post.1st.division <- factor(dt_downsample$Cell.no.post.1st.division, levels = c("1", "2", "3", "4", ">4"))
 
-p8_data <- ggplot(data = dt_downsample[!is.na(Cell.no.post.1st.division)], aes(x = Cell.no.post.1st.division, y = ..count.., fill = is_arrested)) +
+p4_data <- ggplot(data = dt_downsample[!is.na(Cell.no.post.1st.division)], aes(x = Cell.no.post.1st.division, y = ..count.., fill = is_arrested)) +
   geom_bar(position = "fill") + 
   theme_bw() +
   theme(panel.grid = element_blank(),
@@ -295,9 +364,36 @@ p8_data <- ggplot(data = dt_downsample[!is.na(Cell.no.post.1st.division)], aes(x
 # Figure 3
 
 plot_grid(p2_data, p2_model,
-          p7_data, p7_model,
-          p8_data, p8_model,
+          p3_data, p3_model,
+          p4_data, p4_model,
           nrow = 3, ncol = 2,
           labels = paste0(LETTERS[1:6], "."))
 
+# Figures 2B-D
+
+p5 <- ggplot(data = dt, aes(x = Copy.number.results)) + 
+  geom_bar(stat = "count") + 
+  facet_grid(is_arrested ~ .) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "none")
+
+p6 <- ggplot(data = dt, aes(x = Total.no.of.aneuploidies)) + 
+  geom_histogram(binwidth = 1) + 
+  facet_grid(is_arrested ~ .) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "none")
+
+dt$Cell.no.post.1st.division <- factor(dt$Cell.no.post.1st.division, levels = c("1", "2", "3", "4", ">4"))
+
+p7 <- ggplot(data = dt[!is.na(Cell.no.post.1st.division)], 
+            aes(x = Cell.no.post.1st.division)) + 
+  geom_histogram(stat = "count") + 
+  facet_grid(is_arrested ~ .) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "none")
+
+plot_grid(p5, p6, p7, nrow = 1)
 
